@@ -1,0 +1,28 @@
+[project]
+name = "low-dimensional-deepnets"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "autogluon-tabular>=1.5.0",
+    "bokeh>=3.8.2",
+    "einops>=0.8.1",
+    "fastcore>=1.12.4",
+    "h5py>=3.15.1",
+    "ipdb>=0.13.13",
+    "ipykernel>=7.1.0",
+    "jupyter>=1.1.1",
+    "kaleido>=1.2.0",
+    "matplotlib>=3.10.8",
+    "numpy>=2.2.6",
+    "pandas>=2.3.3",
+    "plotly>=6.5.2",
+    "pyyaml>=6.0.3",
+    "scikit-learn>=1.7.2",
+    "scipy>=1.15.3",
+    "seaborn>=0.13.2",
+    "torch>=2.10.0",
+    "torchvision>=0.25.0",
+    "tqdm>=4.67.1",
+]

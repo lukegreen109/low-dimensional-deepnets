@@ -1,0 +1,23 @@
+labels_path: "/home/lgreen/projects/Online_BS/results/data/labels_MNIST.p"
+models_dir: "/home/lgreen/projects/Online_BS/results/MNIST"
+
+# Glob for the saved run files to process (JSON-named .p)
+runs_glob: "/home/lgreen/projects/Online_BS/results/MNIST/*.p"
+
+save_loc: "results/MNIST"
+inpca_save_loc: "inpca_results/MNIST"
+
+GROUPBY: ["bsel"]
+IDX_COLS: ["bsel", "seed", "model", "opt", "t", "err", "verr", "bs", "ratio", "lr", "wd"]
+
+num_classes: 10
+
+# Pipeline settings
+geodesic_n: 100
+lambda_didx_fn: "geod_all_progress"
+join_fn: "all_geod"
+keys: ["yh", "yvh"]
+distf: "dbhat"
+parallel: 0
+err_threshold: 1.0
+
