@@ -47,6 +47,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run compute_lambda + InPCA distance/projection pipeline from a YAML config")
     parser.add_argument("--config", required=True, help="Path to dataset run config YAML (e.g. configs/runs/cifar10.yaml)")
     parser.add_argument("--force-lambda", action="store_true", help="Recompute and overwrite reindexed runs")
+    parser.add_argument("--force-dist", action="store_true", help="Recompute and overwrite cached distance/join artifacts")
+    parser.add_argument("--force-project", action="store_true", help="Recompute and overwrite cached per-seed projections")
     parser.add_argument("--skip-lambda", action="store_true", help="Skip compute_lambda step")
     parser.add_argument("--skip-dist", action="store_true", help="Skip pairwise distance + join step")
     parser.add_argument("--skip-project", action="store_true", help="Skip InPCA projection step")
@@ -148,6 +150,7 @@ def main() -> None:
 
     load_list = None
     if not args.skip_dist:
+        allowed_basenames = {os.path.basename(p) for p in run_files}
         distance_sources = cfg.get("distance_sources")
         if distance_sources is None:
             run_dir = os.path.dirname(run_files[0]) if run_files else None
@@ -161,7 +164,17 @@ def main() -> None:
         for d in sources:
             if d and os.path.isdir(d):
                 fs.extend(glob.glob(os.path.join(d, "*.p")))
-        fs = sorted(set(p for p in fs if _extract_json_config(p) is not None))
+
+        # Avoid accidentally mixing in stale cached runs from previous experiments.
+        # Keep only (a) current run basenames, plus (b) geodesic runs.
+        filtered: list[str] = []
+        for p in fs:
+            if _extract_json_config(p) is None:
+                continue
+            base = os.path.basename(p)
+            if "geodesic" in base or base in allowed_basenames:
+                filtered.append(p)
+        fs = sorted(set(filtered))
         if len(fs) < 2:
             preview = "\n".join(f" - {os.path.basename(p)}" for p in fs[:10])
             raise RuntimeError(
@@ -177,6 +190,7 @@ def main() -> None:
             save_loc=inpca_root,
             idx=idx_cols,
             parallel=int(cfg.get("parallel", 0)),
+            force=bool(args.force_dist or cfg.get("force_dist", False)),
         )
 
         for key in keys:
@@ -201,7 +215,7 @@ def main() -> None:
             # project() expects didx_{key}_{join_fn}.p (because it reads didx_{fn}.p and fn includes key)
             src = os.path.join(inpca_root, f"didx_{join_fn}.p")
             dst = os.path.join(inpca_root, f"didx_{key}_{join_fn}.p")
-            if os.path.exists(src) and not os.path.exists(dst):
+            if os.path.exists(src) and (bool(args.force_dist or args.force_project) or not os.path.exists(dst)):
                 shutil.copy2(src, dst)
 
     if not args.skip_project:
@@ -231,6 +245,7 @@ def main() -> None:
                     err_threshold=err_threshold,
                     extra_points=None,
                     loc=inpca_root,
+                    force=bool(args.force_project or cfg.get("force_project", False)),
                 )
 
 

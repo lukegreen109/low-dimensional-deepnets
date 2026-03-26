@@ -8,108 +8,124 @@ from reparameterization import *
 from utils.embed import lazy_embed
 
 
-def main(loc="results/models/loaded", name='', n=100, ts=None, loaded=False, log=False,
-         data_args={'data': 'CIFAR10', 'aug': 'none', 'sub_sample': 0}, pdata=None):
-    data = get_data(data_args)
-    if pdata is not None:
-        pdata = get_data(pdata)
-    labels = {}
-    qs = {}
-    ps = {}
-    for key in ["train", "val"]:
-        k = "yh" if key == "train" else "yvh"
-        try:
-            y_ = np.array(data[key].targets, dtype=np.int32)
-        except AttributeError:
-            y_ = np.array(data[key].y, dtype=np.int32)
-        y = np.zeros((y_.size, y_.max() + 1))
-        y[np.arange(y_.size), y_] = 1
-        qs[k] = np.sqrt(np.expand_dims(y, axis=0))
-        if pdata is None:
-            ps[k] = np.sqrt(np.ones_like(qs[k]) / 10)
-        else:
-            y_ = np.array(pdata[key].targets, dtype=np.int32)
-            y = np.zeros((y_.size, y_.max() + 1))
-            y[np.arange(y_.size), y_] = 1
-            ps[k] = np.sqrt(np.expand_dims(y, axis=0))
+# ...existing code...
+import os, json
+# ...existing code...
 
-        labels[k] = y_
+def _mk_qp_from_labels(labels_override, nclasses=None, endpoint_labels_override=None):
+    """Build qs (sqrt one-hot labels) and ps (sqrt endpoint) from provided labels."""
+    qs, ps, labels = {}, {}, {}
+    def onehot(y, K=None):
+        y = np.asarray(y, dtype=np.int32)
+        K = int(K) if K is not None else int(y.max() + 1)
+        oh = np.zeros((y.size, K), dtype=np.float32)
+        oh[np.arange(y.size), y] = 1.0
+        return oh, K
+
+    for split in ["train", "val"]:
+        key = "yh" if split == "train" else "yvh"
+        y = labels_override[split]
+        oh, K = onehot(y, K=nclasses)
+        q = np.sqrt(np.expand_dims(oh, axis=0))
+
+        # Endpoint: either provided labels or uniform
+        if endpoint_labels_override is not None:
+            y_p = endpoint_labels_override[split]
+            oh_p, Kp = onehot(y_p, K=nclasses or K)
+            p = np.sqrt(np.expand_dims(oh_p, axis=0))
+        else:
+            p = np.sqrt(np.ones_like(q) / (nclasses or K))
+
+        qs[key] = q
+        ps[key] = p
+        labels[key] = np.asarray(y, dtype=np.int32)
+    return qs, ps, labels
+
+
+def main(loc="results/models/loaded", name='', n=100, ts=None, loaded=False, log=False,
+         data_args={'data': 'CIFAR10', 'aug': 'none', 'sub_sample': 0}, pdata=None,
+         labels_override=None, endpoint_labels_override=None, nclasses=None):
+    # If labels are provided, bypass dataset loading
+    if labels_override is not None:
+        qs, ps, labels = _mk_qp_from_labels(labels_override, nclasses, endpoint_labels_override)
+    else:
+        data = get_data(data_args)
+        if pdata is not None:
+            pdata = get_data(pdata)
+        labels, qs, ps = {}, {}, {}
+        for key in ["train", "val"]:
+            k = "yh" if key == "train" else "yvh"
+            try:
+                y_ = np.array(data[key].targets, dtype=np.int32)
+            except AttributeError:
+                y_ = np.array(data[key].y, dtype=np.int32)
+            y = np.zeros((y_.size, y_.max() + 1), dtype=np.float32)
+            y[np.arange(y_.size), y_] = 1.0
+            qs[k] = np.sqrt(np.expand_dims(y, axis=0))
+            if pdata is None:
+                K = int(nclasses) if nclasses is not None else (y_.max() + 1 if y_.size else 10)
+                ps[k] = np.sqrt(np.ones_like(qs[k]) / K)
+            else:
+                y_ = np.array(pdata[key].targets, dtype=np.int32)
+                y = np.zeros((y_.size, y_.max() + 1), dtype=np.float32)
+                y[np.arange(y_.size), y_] = 1.0
+                ps[k] = np.sqrt(np.expand_dims(y, axis=0))
+            labels[k] = y_
 
     if ts is None:
-        ts = np.linspace(0, 1, n+1)[1:]
+        ts = np.linspace(0, 1, n + 1)[1:]
     else:
         n = len(ts)
+
     geodesic = []
+    eps = 1e-12
 
     for i in range(len(ts)):
-        r = dict(
-            seed=0,
-            bseed=-1,
-            m=f"{name}geodesic",
-            opt=f"{name}geodesic",
-        )
+        r = dict(seed=0, bseed=-1, m=f"{name}geodesic", opt=f"{name}geodesic")
         r['t'] = ts[i]
         for key in ["yh", "yvh"]:
             r[key] = gamma(ts[i], ps[key], qs[key]) ** 2
             if log:
-                r[key] = np.log(r[key])
+                r[key] = np.log(np.clip(r[key], eps, None))
             ekey = "e" if key == "yh" else "ev"
             fkey = "f" if key == "yh" else "fv"
-            e = np.argmax(r[key], -1) == labels[key]
+            e = (np.argmax(r[key], -1) == labels[key]).astype(np.float32)
             r[ekey] = e.squeeze()
             errkey = "err" if key == "yh" else "verr"
-            r[errkey] = 1 - e.mean()
-            f = - (np.log(r[key]) * qs[key]).sum(-1)
+            r[errkey] = 1.0 - e.mean()
+            # use epsilon to avoid log(0)
+            f = - (np.log(np.clip(r[key], eps, None)) * qs[key]).sum(-1)
             r[fkey] = f.squeeze()
             r[f'{fkey}avg'] = f.mean()
         geodesic.append(r)
 
+    # Filename config dict (match original behavior)
     if loaded:
-        geodesic = pd.DataFrame(geodesic)
-        geodesic = geodesic.reindex(
+        geodesic_df = pd.DataFrame(geodesic).reindex(
             columns=[
-                "seed",
-                "bseed",
-                "m",
-                "opt",
-                "t",
-                "e",
-                "ev",
-                "err",
-                "verr",
-                "f",
-                "fv",
-                "favg",
-                "fvavg",
-                "bs",
-                "drop",
-                "aug",
-                "bn",
-                "lr",
-                "wd",
-                "yh",
-                "yvh",
+                "seed","bseed","m","opt","t","e","ev","err","verr",
+                "f","fv","favg","fvavg","bs","drop","aug","bn","lr","wd","yh","yvh"
             ],
             fill_value="na",
         )
-
         for key in ["yh", "yvh"]:
-            geodesic[key] = geodesic.apply(lambda r: r[key].squeeze(), axis=1)
-
-        d = dict(
-            geodesic[
-                ["seed", "bseed", "aug", "m", "bn", "drop", "opt", "bs", "lr", "wd"]
-            ].iloc[0]
-        )
+            geodesic_df[key] = geodesic_df.apply(lambda rr: rr[key].squeeze(), axis=1)
+        d = dict(geodesic_df[["seed","bseed","aug","m","bn","drop","opt","bs","lr","wd"]].iloc[0])
     else:
-        d = {k: geodesic[0][k] for k in ["seed", "bseed",
-                                         "aug", "m", "bn", "drop", "opt", "bs", "lr", "wd"]}
+        d = {k: geodesic[0].get(k, "na") for k in ["seed","bseed","aug","m","bn","drop","opt","bs","lr","wd"]}
+
     d["seed"] = 0
     d["bseed"] = -1
-    fn = f"{json.dumps(d).replace(' ', '')}.p"
-    print(os.path.join(loc, fn))
+    d["bsel"] = "geodesic"  # add batch selection tag for grouping by bsel
 
-    th.save(geodesic, os.path.join(loc, fn))
+    fn = f"{json.dumps(d).replace(' ', '')}.p"
+    os.makedirs(loc, exist_ok=True)
+    out_path = os.path.join(loc, fn)
+    print(out_path)
+    if loaded:
+        th.save(geodesic_df, out_path)
+    else:
+        th.save(geodesic, out_path)
 
 
 def get_projection():

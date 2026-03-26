@@ -163,9 +163,60 @@ def explained_distance(r):
 
 
 def explained_stress(r):
-    ii = np.argsort(np.abs(r['es']))[::-1]
-    es = r['es'][ii][:50]
-    return 1 - np.sqrt(1-np.cumsum(es ** 2)/r['fn']**2)
+    """Return cumulative "explained stress" from an eigenspectrum.
+
+    Historically, some results were saved with keys `es` (spectrum) and `fn`
+    (Frobenius norm). Newer result files may only contain `e` (eigenvalues).
+    This helper supports both formats.
+    """
+
+    if not isinstance(r, dict):
+        raise TypeError(f"explained_stress expects a dict, got {type(r)}")
+
+    def _as_numpy(x):
+        if isinstance(x, np.ndarray):
+            return x
+        try:
+            import torch as th
+
+            if th.is_tensor(x):
+                return x.detach().cpu().numpy()
+        except Exception:
+            pass
+        return np.asarray(x)
+
+    spectrum = None
+    for k in ("es", "e", "evals", "eigvals"):
+        if k in r:
+            spectrum = _as_numpy(r[k])
+            break
+    if spectrum is None:
+        raise KeyError(
+            "Could not find an eigenspectrum in r; expected one of keys: "
+            "'es', 'e', 'evals', 'eigvals'"
+        )
+
+    spectrum = np.ravel(spectrum)
+    if spectrum.size == 0:
+        return np.asarray([])
+
+    ii = np.argsort(np.abs(spectrum))[::-1]
+    spectrum_sorted = spectrum[ii]
+
+    # Frobenius norm of the underlying symmetric operator: ||A||_F^2 = sum_i λ_i^2
+    fn = r.get("fn", None)
+    if fn is None:
+        fn2 = float(np.sum(np.square(spectrum_sorted)))
+    else:
+        fn2 = float(fn) ** 2
+    if not np.isfinite(fn2) or fn2 <= 0:
+        # Degenerate case: no energy in the spectrum
+        return np.zeros(min(50, spectrum_sorted.size), dtype=float)
+
+    spectrum_top = spectrum_sorted[:50]
+    frac = np.cumsum(np.square(spectrum_top)) / fn2
+    frac = np.clip(frac, 0.0, 1.0)
+    return 1.0 - np.sqrt(1.0 - frac)
 
 
 def weighted_MDS(w, weight, ne=3):

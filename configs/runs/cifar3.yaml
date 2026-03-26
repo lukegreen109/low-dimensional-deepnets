@@ -1,0 +1,23 @@
+labels_path: "/home/lgreen/projects/Online_BS/results/data/labels_CIFAR3.p"
+models_dir: "/home/lgreen/projects/Online_BS/results/CIFAR3"
+
+# Glob for the saved run files to process (JSON-named .p)
+runs_glob: "/home/lgreen/projects/Online_BS/results/CIFAR3/*.p"
+
+save_loc: "results/CIFAR3"
+inpca_save_loc: "inpca_results/CIFAR3"
+
+GROUPBY: ["bsel"]
+IDX_COLS: ["bsel", "seed", "model", "opt", "t", "err", "verr", "bs", "ratio", "lr", "wd"]
+
+num_classes: 3
+
+# Pipeline settings
+geodesic_n: 100
+lambda_didx_fn: "geod_all_progress"
+join_fn: "all_geod"
+keys: ["yh", "yvh"]
+distf: "dbhat"
+parallel: 0
+err_threshold: 1.0
+

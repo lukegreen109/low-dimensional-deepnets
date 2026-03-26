@@ -27,3 +27,15 @@ CDICT_OPT = {'adam': '#e41a1c',
             'sgd': '#377eb8',
             'sgdn': '#4daf4a',
             'geodesic': '#000000'}
+
+# Consistent (soft) colors for batch selection methods.
+# Use this across notebooks/figures to keep method colors stable.
+CDICT_BSEL = {
+    'Uniform':  '#66c2a5',
+    'RhoLoss':  '#fc8d62',
+    'DivBS':    '#8da0cb',
+    'Bayesian': '#e78ac3',
+    'geodesic': '#000000',
+    'Full':     "#e1e86e",
+    'GradNorm': "#c76c6c",
+}

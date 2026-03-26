@@ -16,25 +16,44 @@ import pandas as pd
 from utils.embed import xembed, proj_, lazy_embed
 from utils import load_d, get_idx, CHOICES, dbhat
 
+import re, ast
+
 
 def join_didx(loc="inpca_results", key="yh", fn="", 
               load_list=[],
               groupby=["m"], remove_f=False):
+    # If no explicit load_list, discover all pair blocks on disk
     if len(load_list) == 0:
-        load_list = [(c, c) for c in product(*[CHOICES[g] for g in groupby])]
+        pairs = []
+        for path in glob.glob(os.path.join(loc, f"didx_{key}_*.p")):
+            base = os.path.basename(path)
+            # skip the aggregated file (didx_{fn}.p) if present
+            if fn and base == f"didx_{fn}.p":
+                continue
+            m = re.match(rf"didx_{re.escape(key)}_(\(.+?\))_(\(.+?\))\.p$", base)
+            if not m:
+                continue
+            try:
+                c1 = ast.literal_eval(m.group(1))
+                c2 = ast.literal_eval(m.group(2))
+                pairs.append((c1, c2))
+            except Exception:
+                continue
+        load_list = pairs
+
     loaded = set()
     d = pd.DataFrame()
     for pair in load_list:
         c1, c2 = pair
         load_fn = os.path.join(loc, f"didx_{key}_{c1}_{c2}.p")
         if os.path.exists(load_fn):
-            if not c1 in loaded:
+            if c1 not in loaded:
                 loaded.add(c1)
-                di = th.load(load_fn)["dr"]
+                di = th.load(load_fn, weights_only=False)["dr"]
                 d = pd.concat([d, di])
-            if not c2 in loaded:
+            if c2 not in loaded:
                 loaded.add(c2)
-                di = th.load(load_fn)["dc"]
+                di = th.load(load_fn, weights_only=False)["dc"]
                 d = pd.concat([d, di])
             if remove_f:
                 os.remove(load_fn)
@@ -108,6 +127,7 @@ def compute_distance(
     save_loc="inpca_results_avg",
     idx=["seed", "m", "opt", "t", "err", "verr", "bs", "aug", "lr", "wd"],
     parallel=-1,
+    force=False,
 ):
     if all_files is None:
         all_files = glob.glob(os.path.join(loc, "*}.p"))
@@ -117,15 +137,16 @@ def compute_distance(
         file_list[tuple(configs[key] for key in groupby)].append(f)
 
     if load_list is None:
-        load_list_ = list(combinations(file_list.keys(), 2)) + [
-            (k, k) for k in file_list.keys()
-        ]
-        load_list = []
-        for pair in load_list_:
-            s1, s2 = pair
-            if (not os.path.exists(os.path.join(save_loc, f"w_yh_{s1}_{s2}.p"))) \
-                or (not os.path.exists(os.path.join(save_loc, f"w_yvh_{s1}_{s2}.p"))):
-                load_list.append(pair)
+        load_list_ = list(combinations(file_list.keys(), 2)) + [(k, k) for k in file_list.keys()]
+        if force:
+            load_list = load_list_
+        else:
+            load_list = []
+            for pair in load_list_:
+                s1, s2 = pair
+                if (not os.path.exists(os.path.join(save_loc, f"w_yh_{s1}_{s2}.p"))) \
+                    or (not os.path.exists(os.path.join(save_loc, f"w_yvh_{s1}_{s2}.p"))):
+                    load_list.append(pair)
 
     print(len(load_list))
     if parallel > 0:
@@ -150,8 +171,8 @@ def merge_dists(fn1, fn2, merge_loc="/home/ubuntu/ext_vol/inpca/inpca_results_al
                 key="yh", save_f="merged_allcnn",
                 cols= ['seed', 'iseed', 'm', 'opt', 'bs', 'aug', 'lr', 'wd', 'corner', 'isinit', 't']):
     # merge two distance matrices, keeping the order of the first didx
-    d1 = th.load(os.path.join(merge_loc, f"didx_{fn1}.p")).reset_index()
-    d2 = th.load(os.path.join(merge_loc, f"didx_{fn2}.p")).reset_index()
+    d1 = th.load(os.path.join(merge_loc, f"didx_{fn1}.p"), weights_only=False).reset_index()
+    d2 = th.load(os.path.join(merge_loc, f"didx_{fn2}.p"), weights_only=False).reset_index()
     didxs = d1.merge(d2, on=cols, how='outer')
     th.save(didxs, os.path.join(merge_loc, f"didx_{save_f}.p"))
 
@@ -185,7 +206,7 @@ def join(loc="inpca_results_avg_new", key="yh", groupby=["m"],
          save_loc="inpca_results_avg_new", fn="all", remove_f=False):
 
     didxs_f = os.path.join(save_loc, f"didx_{fn}.p")
-    didxs = th.load(didxs_f)
+    didxs = th.load(didxs_f, weights_only=False)
     didxs = didxs.reset_index(drop=True)
 
     indices = didxs.groupby(groupby).indices
@@ -214,7 +235,7 @@ def join(loc="inpca_results_avg_new", key="yh", groupby=["m"],
             c, r = pair
             cidxs, ridxs = indices[c], indices[r]
         try:
-            w_ = th.load(fname)
+            w_ = th.load(fname, weights_only=False)
         except:
             print(fname)
             continue
@@ -232,26 +253,30 @@ def join(loc="inpca_results_avg_new", key="yh", groupby=["m"],
     f.close()
 
 
-def project(seed=42, fn="yh_all", err_threshold=0.1, extra_points=None):
-    loc = "inpca_results_all"
+def project(seed=42, fn="yh_all", err_threshold=0.1, extra_points=None, loc="inpca_results_all", force=False):
     ne = 3
 
     folder = os.path.join(loc, str(seed))
     if not os.path.exists(folder):
         os.makedirs(folder)
 
-    if os.path.isfile(os.path.join(folder, f"didx_{fn}.p")):
-        idx, didx = th.load(os.path.join(folder, f"didx_{fn}.p"))
+    if (not force) and os.path.isfile(os.path.join(folder, f"didx_{fn}.p")):
+        idx, didx = th.load(os.path.join(folder, f"didx_{fn}.p"), weights_only=False)
     else:
         # filter out un-trained model
         idx = []
-        didx = th.load(os.path.join(loc, f"didx_{fn}.p"))
-        for (c, indices) in didx.groupby(
-            ["seed", "m", "opt", "bs", "aug", "lr", "wd"]
-        ).indices.items():
-            if (didx.iloc[indices[-1]]["err"] < err_threshold and c[0] == seed) or c[
-                0
-            ] == 0:
+        didx = th.load(os.path.join(loc, f"didx_{fn}.p"), weights_only=False)
+        default_groups = ["seed", "m", "opt", "bs", "aug", "lr", "wd"]
+        groups = [g for g in default_groups if g in didx.columns]
+        if "seed" not in groups:
+            raise KeyError("didx is missing required column 'seed'")
+
+        seed_pos = groups.index("seed")
+        for (c, indices) in didx.groupby(groups).indices.items():
+            # Pandas returns a scalar key if grouping by 1 column.
+            c_tuple = (c,) if len(groups) == 1 else c
+            c_seed = c_tuple[seed_pos]
+            if (didx.iloc[indices[-1]]["err"] < err_threshold and c_seed == seed) or c_seed == 0:
                 idx.extend(indices)
         idx = sorted(idx)
         didx = didx.iloc[idx]
@@ -262,8 +287,8 @@ def project(seed=42, fn="yh_all", err_threshold=0.1, extra_points=None):
     n = w.shape[0]
     d_mean = w.mean(0)
 
-    if os.path.isfile(os.path.join(folder, f"r_{fn}.p")):
-        r = th.load(os.path.join(folder, f"r_{fn}.p"))
+    if (not force) and os.path.isfile(os.path.join(folder, f"r_{fn}.p")):
+        r = th.load(os.path.join(folder, f"r_{fn}.p"), weights_only=False)
     else:
         l = np.eye(w.shape[0]) - 1.0 / w.shape[0]
         w = -l @ w @ l / 2
@@ -271,7 +296,7 @@ def project(seed=42, fn="yh_all", err_threshold=0.1, extra_points=None):
         th.save(r, os.path.join(folder, f"r_{fn}.p"))
 
     if extra_points is not None:
-        didx_ = th.load(os.path.join(loc, f"didx_{fn}.p"))
+        didx_ = th.load(os.path.join(loc, f"didx_{fn}.p"), weights_only=False)
         ridx = get_idx(didx_, extra_points)
         dp = f["w"][:, idx][ridx, :]
         q = lazy_embed(dp=dp, d_mean=d_mean, evals=r["e"], evecs=r["v"], ne=ne)
@@ -296,10 +321,10 @@ def compute_path_distance(
         all_files = glob.glob(os.path.join(loc, "*}.p"))
         all_files = np.array(all_files)
     if load:
-        didx = th.load(os.path.join(save_loc, f"didx_{fn}_{key}.p")).reset_index(
+        didx = th.load(os.path.join(save_loc, f"didx_{fn}_{key}.p"), weights_only=False).reset_index(
             drop=True
         )
-        dists = th.load(os.path.join(save_loc, f"dists_{fn}_{key}.p"))
+        dists = th.load(os.path.join(save_loc, f"dists_{fn}_{key}.p"), weights_only=False)
         chunks = np.array_split(np.arange(len(didx)), 10)
         chunks.extend(np.array_split(np.arange(len(didx), len(all_files)), 2))
     else:

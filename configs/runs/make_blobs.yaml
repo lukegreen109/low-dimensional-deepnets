@@ -1,0 +1,23 @@
+labels_path: "/home/lgreen/projects/Online_BS/results/data/labels_MakeBlobs.p"
+models_dir: "/home/lgreen/projects/Online_BS/results/MakeBlobs"
+
+# Glob for the saved run files to process (JSON-named .p)
+runs_glob: "/home/lgreen/projects/Online_BS/results/MakeBlobs/*.p"
+
+save_loc: "results/MakeBlobs"
+inpca_save_loc: "inpca_results/MakeBlobs"
+
+GROUPBY: ["bsel"]
+IDX_COLS: ["bsel", "seed", "model", "opt", "t", "err", "verr", "bs", "ratio", "lr", "wd"]
+
+num_classes: 3
+
+# Pipeline settings
+geodesic_n: 100
+lambda_didx_fn: "geod_all_progress"
+join_fn: "all_geod"
+keys: ["yh", "yvh"]
+distf: "dbhat"
+parallel: 0
+err_threshold: 1.0
+

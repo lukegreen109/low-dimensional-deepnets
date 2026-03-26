@@ -72,8 +72,12 @@ def load_d(
     nmodels = math.inf if nmodels < 0 else nmodels
     for f in tqdm.tqdm(file_list):
         configs = json.loads(f[f.find("{") : f.find("}") + 1])
+        # Backward/alternate naming support
+        # Many scripts expect 'm' (model name). If runs are saved with 'model', alias it.
+        if "m" not in configs and "model" in configs:
+            configs["m"] = configs["model"]
         try:
-            d_ = th.load(f)
+            d_ = th.load(f, weights_only=False)
         except RuntimeError:
             print(f)
             continue

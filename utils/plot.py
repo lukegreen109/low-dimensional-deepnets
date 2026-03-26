@@ -446,17 +446,47 @@ def plot_evals(r):
     ax.set_yscale('log')
     ax.grid()
     w = 0.4
-    es = explained_stress(r)
-    ii = np.argsort(np.abs(r['es']))[::-1]
-    r['es'] = r['es'][ii]
-    for (i, e) in enumerate(r['es'][:50]):
+    expl = explained_stress(r)
+
+    if not isinstance(r, dict):
+        raise TypeError(f"plot_evals expects a dict, got {type(r)}")
+
+    spectrum = None
+    for k in ("es", "e", "evals", "eigvals"):
+        if k in r:
+            spectrum = r[k]
+            break
+    if spectrum is None:
+        raise KeyError(
+            "Could not find an eigenspectrum in r; expected one of keys: "
+            "'es', 'e', 'evals', 'eigvals'"
+        )
+
+    # Convert to numpy for sorting/plotting
+    if isinstance(spectrum, np.ndarray):
+        spectrum = spectrum
+    else:
+        try:
+            if th.is_tensor(spectrum):
+                spectrum = spectrum.detach().cpu().numpy()
+            else:
+                spectrum = np.asarray(spectrum)
+        except Exception:
+            spectrum = np.asarray(spectrum)
+
+    spectrum = np.ravel(spectrum)
+    ii = np.argsort(np.abs(spectrum))[::-1]
+    spectrum_sorted = spectrum[ii]
+
+    for (i, e) in enumerate(spectrum_sorted[:50]):
         ax.plot((-w/4, w/4), (np.abs(e), np.abs(e)),
                 c='k' if e > 0 else 'r')
         if i in [0, 2, 9, 19, 49]:
-            ax.text(1.7/3 * w, np.abs(e)*0.9, "%.2f" %
-                 (es[i]), size=28)
+            if i < len(expl):
+                ax.text(1.7/3 * w, np.abs(e)*0.9, "%.2f" % (expl[i]), size=28)
         
-    ax.text(0.8/3 * w, 1.3*np.abs(r['es'][0]), "Explained\n   Stress", size=28)
+    if spectrum_sorted.size > 0:
+        ax.text(0.8/3 * w, 1.3*np.abs(spectrum_sorted[0]), "Explained\n   Stress", size=28)
     ax.set_xlim([-w/2, w/2])
     ax.get_xaxis().set_visible(False)
     return fig
@@ -473,11 +503,39 @@ def plot_cone(p):
 
 
 def plot_explained_var(r, key='yh'):
-    ii = np.argsort(np.abs(r['es']))[::-1]
-    es = r['es'][ii][:50]
+    if not isinstance(r, dict):
+        raise TypeError(f"plot_explained_var expects a dict, got {type(r)}")
+
+    spectrum = None
+    for k in ("es", "e", "evals", "eigvals"):
+        if k in r:
+            spectrum = r[k]
+            break
+    if spectrum is None:
+        raise KeyError(
+            "Could not find an eigenspectrum in r; expected one of keys: "
+            "'es', 'e', 'evals', 'eigvals'"
+        )
+
+    if isinstance(spectrum, np.ndarray):
+        spectrum = spectrum
+    else:
+        try:
+            if th.is_tensor(spectrum):
+                spectrum = spectrum.detach().cpu().numpy()
+            else:
+                spectrum = np.asarray(spectrum)
+        except Exception:
+            spectrum = np.asarray(spectrum)
+
+    spectrum = np.ravel(spectrum)
+    ii = np.argsort(np.abs(spectrum))[::-1]
+    spectrum_top = spectrum[ii][:50]
     dset = 'train' if key == 'yh' else 'test'
-    df = pd.DataFrame({'eigenvalue index':np.arange(len(es)), 
-                       'explained stress':explained_stress(r), 
+    expl = explained_stress(r)
+    n = min(len(spectrum_top), len(expl))
+    df = pd.DataFrame({'eigenvalue index':np.arange(n), 
+                       'explained stress':np.asarray(expl)[:n], 
                        'data':dset})
     f = plt.figure(figsize=(8, 6))
     g = sns.lineplot(data=df, x='eigenvalue index',
